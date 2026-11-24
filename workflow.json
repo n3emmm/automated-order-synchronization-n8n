@@ -1,0 +1,368 @@
+{
+  "id": "OrderSyncLocalV1",
+  "name": "Automated Order Synchronization System",
+  "active": false,
+  "nodes": [
+    {
+      "name": "Manual",
+      "id": "2a242d46-8426-570b-bf7b-8070f8a5fbf1",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "name": "Daily (disabled)",
+      "id": "60a9ae51-d74f-56f6-b85e-345fb5568aa7",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        180
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "disabled": true
+    },
+    {
+      "name": "Configuration",
+      "id": "4d473530-3d79-5eaa-8ba1-a475ecf85ab0",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        210,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{json:{\n  source:'http://127.0.0.1:18765/orders',\n  sheet:'http://127.0.0.1:18765/v4/spreadsheets/mock',\n  op:'page',cursor:'',seen:[],pages:0,maxPages:100,orders:{},queue:[],batch:[],\n  attempt:1,delay:0,duplicates:0,events:[],errors:[],counts:{added:0,updated:0,skipped:0}\n}}];"
+      }
+    },
+    {
+      "name": "Dispatch",
+      "id": "43eb6ea5-00e2-59d6-9a81-ee812e66033a",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        430,
+        0
+      ],
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 5,
+        "output": "={{ ['page','index','verify','write','done'].indexOf($json.op) }}"
+      }
+    },
+    {
+      "name": "Fetch page",
+      "id": "34851195-7ee6-51c8-9019-c60b672c6715",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        -180
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.source+'?limit=50&cursor='+encodeURIComponent($json.cursor) }}",
+        "options": {
+          "timeout": 15000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "name": "Read Orders",
+      "id": "bf04b33b-1bb9-505d-a982-cf8b14ed0e14",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.sheet+'/values/Orders!A1:E?valueRenderOption=UNFORMATTED_VALUE' }}",
+        "options": {
+          "timeout": 15000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "name": "Write fixed rows",
+      "id": "337c2fa6-0848-5c74-ab35-2b4239931e65",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        180
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.sheet+'/values:batchUpdate' }}",
+        "options": {
+          "timeout": 15000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {valueInputOption:'RAW',data:$json.batch.map(e=>({range:'Orders!A'+e.row+':E'+e.row,values:[e.values]}))} }}"
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "name": "Apply response",
+      "id": "64d65171-cf68-5f93-bac8-b60598a08270",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Pure transition function. Exactly one state item travels around the n8n loop.\nfunction transition(s, response, now = Date.now()) {\n  const headers = ['order_id', 'status', 'total_minor', 'currency', 'updated_at'];\n  const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);\n  const stop = reason => {\n    s.fatal = reason;\n    s.op = 'done';\n    return s;\n  };\n  const next = op => { s.op = op; s.attempt = 1; };\n  const error = (id, reason) => s.errors.push({ order_id: id, reason });\n  const selectBatch = () => {\n    s.batch = s.queue.splice(0, s.single ? 1 : 40);\n    next(s.batch.length ? 'write' : 'done');\n    if (s.single && s.batch.length) s.attempt = s.batch[0].start || 1;\n  };\n  const code = Number(response.statusCode || 0);\n  const retryable = !code || [408, 425, 429].includes(code) || (code >= 500 && code <= 599);\n  s.delay = 0;\n  if (code === 401 || code === 403) return stop('authentication_' + code);\n  if (code < 200 || code >= 300) {\n    s.events.push({ operation: s.op, status: code, attempt: s.attempt });\n    if (retryable) {\n      const value = String(response.headers?.['retry-after'] ?? response.headers?.['Retry-After'] ?? '').trim();\n      const seconds = /^\\d+$/.test(value) ? Number(value) : (Date.parse(value) - now) / 1000;\n      s.delay = Math.max(2 ** (s.attempt - 1), Number.isFinite(seconds) ? Math.ceil(seconds) : 0);\n      if (s.op === 'write') {\n        s.writeAttempt = s.attempt;\n        next('verify'); // Read even after the third write, which might have committed.\n      } else if (s.attempt < 3) s.attempt++;\n      else return stop(s.op + '_retry_exhausted');\n      return s;\n    }\n    if (s.op !== 'write' || code !== 400) return stop(s.op + '_http_' + code);\n    if (s.batch.length > 1 && s.attempt < 3) {\n      s.single = true;\n      for (const entry of s.batch) entry.start = s.attempt + 1;\n      s.queue.unshift(...s.batch);\n    } else for (const entry of s.batch) error(entry.values[0], 'write_rejected');\n    selectBatch();\n    return s;\n  }\n  const body = response.body;\n  if (s.op === 'page') {\n    if (!Array.isArray(body?.orders) || !Object.hasOwn(body,'next_cursor')) return stop('invalid_page');\n    for (const order of body.orders) {\n      const id = order?.order_id;\n      const ts = order?.updated_at;\n      if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(id) ||\n          !['paid','pending','cancelled','shipped'].includes(order.status) ||\n          !Number.isSafeInteger(order.total_minor) || order.total_minor < 0 ||\n          !/^[A-Z]{3}$/.test(String(order.currency)) || typeof order.currency !== 'string' ||\n          typeof ts !== 'string' || !/^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ$/.test(ts) ||\n          !Number.isFinite(Date.parse(ts)) || new Date(ts).toISOString() !== ts.slice(0,-1)+'.000Z') {\n        error(typeof id === 'string' ? id.slice(0,80) : null,'invalid_order');\n        continue;\n      }\n      const key = ':' + id;\n      const row = [id,order.status,String(order.total_minor),order.currency,ts];\n      if (Object.hasOwn(s.orders,key)) {\n        if (equal(s.orders[key],row)) s.duplicates++;\n        else if (s.orders[key] !== null) { error(id,'conflicting_source'); s.orders[key] = null; }\n      } else s.orders[key] = row;\n    }\n    s.pages++;\n    if (body.next_cursor === null) { next('index'); return s; }\n    if (typeof body.next_cursor !== 'string' || !body.next_cursor || s.seen.includes(body.next_cursor))\n      return stop('invalid_or_repeated_cursor');\n    if (s.pages >= s.maxPages) return stop('page_limit');\n    s.cursor = body.next_cursor;\n    s.seen.push(s.cursor);\n    next('page');\n    return s;\n  }\n  if (s.op === 'index' || s.op === 'verify') {\n    const rows = body?.values;\n    if (!Array.isArray(rows) || !equal(rows[0],headers)) return stop('invalid_sheet_header');\n    const index = new Map();\n    for (let i=1; i<rows.length; i++) {\n      const row = rows[i];\n      if (!Array.isArray(row)) return stop('invalid_sheet_row');\n      if (!row.length) continue;\n      if (!row[0] || index.has(row[0])) return stop('missing_or_duplicate_sheet_id');\n      index.set(row[0], i+1);\n    }\n    if (s.op === 'verify') {\n      const pending = [];\n      for (const entry of s.batch) {\n        const actual = rows[entry.row-1] || [];\n        if (equal(actual,entry.values)) s.counts[entry.kind]++;\n        else if (!equal(actual,entry.before)) return stop('writer_conflict');\n        else pending.push(entry);\n      }\n      if (!pending.length) selectBatch();\n      else if (s.writeAttempt >= 3) {\n        for (const e of pending) error(e.values[0],'write_unconfirmed');\n        selectBatch();\n      } else { s.batch = pending; s.op = 'write'; s.attempt = s.writeAttempt + 1; }\n      return s;\n    }\n    let end = rows.length;\n    for (const values of Object.values(s.orders)) {\n      if (!values) continue;\n      const found = index.get(values[0]);\n      const before = found ? rows[found-1] : [];\n      if (equal(before,values)) s.counts.skipped++;\n      else s.queue.push({row: found || ++end, values, before, kind: found ? 'updated' : 'added'});\n    }\n    delete s.orders;\n    selectBatch();\n    return s;\n  }\n  // A success response with an incomplete acknowledgement also needs reconciliation.\n  if (body?.totalUpdatedRows !== s.batch.length) {\n    s.writeAttempt = s.attempt;\n    next('verify');\n  } else {\n    for (const entry of s.batch) s.counts[entry.kind]++;\n    selectBatch();\n  }\n  return s;\n}\n\nconst s = JSON.parse(JSON.stringify($('Dispatch').item.json));\nconst r = {...$json};\nr.body = r.body ?? r.data;\nif(typeof r.body === 'string') { try { r.body=JSON.parse(r.body); } catch { r.body=null; } }\nreturn [{json:transition(s,r),pairedItem:{item:0}}];"
+      }
+    },
+    {
+      "name": "Delay needed",
+      "id": "b37e15c7-3dd6-5ab9-adc5-cfa120fbcdd7",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1130,
+        0
+      ],
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.delay > 0 && $json.op !== \"done\" ? 1 : 0 }}"
+      }
+    },
+    {
+      "name": "Backoff",
+      "id": "faec814e-02ea-5418-8da3-f3659baa66af",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1130,
+        205
+      ],
+      "parameters": {
+        "amount": "={{ $json.delay }}",
+        "unit": "seconds"
+      },
+      "webhookId": "9374803a-16d5-56fc-aaa1-339f0762a96a"
+    },
+    {
+      "name": "Run report",
+      "id": "7c316099-7a1a-5b22-955f-60282a337dba",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        365
+      ],
+      "parameters": {
+        "jsCode": "const s=$json;\nreturn [{json:{status:s.fatal?'aborted':s.errors.length?'partial':'complete',...s.counts,failed:s.errors.length,pages:s.pages,duplicateInputs:s.duplicates,fatal:s.fatal||null,errors:s.errors,events:s.events}}];"
+      }
+    }
+  ],
+  "connections": {
+    "Manual": {
+      "main": [
+        [
+          {
+            "node": "Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily (disabled)": {
+      "main": [
+        [
+          {
+            "node": "Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuration": {
+      "main": [
+        [
+          {
+            "node": "Dispatch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch": {
+      "main": [
+        [
+          {
+            "node": "Fetch page",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Read Orders",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Read Orders",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Write fixed rows",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Run report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch page": {
+      "main": [
+        [
+          {
+            "node": "Apply response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Orders": {
+      "main": [
+        [
+          {
+            "node": "Apply response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write fixed rows": {
+      "main": [
+        [
+          {
+            "node": "Apply response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply response": {
+      "main": [
+        [
+          {
+            "node": "Delay needed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delay needed": {
+      "main": [
+        [
+          {
+            "node": "Dispatch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Backoff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Backoff": {
+      "main": [
+        [
+          {
+            "node": "Dispatch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Amman",
+    "saveDataSuccessExecution": "all"
+  }
+}
