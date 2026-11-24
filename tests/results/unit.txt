@@ -1,0 +1,22 @@
+✔ released graph, safe defaults and embedded source (1.330965ms)
+✔ empty store terminates cleanly (0.699974ms)
+✔ 250 distinct ids across five pages (2.506957ms)
+✔ cursor cycle and ceiling abort before writes (0.28568ms)
+✔ invalid source envelope never implies end of feed (0.215184ms)
+✔ bad date, invalid record and conflicting duplicate isolated (1.30055ms)
+✔ header and duplicate destination keys fail closed (2.303801ms)
+✔ read-after-commit confirms inserts without second write (0.449086ms)
+✔ short acknowledgement and mixed verification retry only missing fixed row (0.552492ms)
+✔ changed occupant aborts reconciliation (0.47765ms)
+✔ 429 honors delta/date, default exponential and cap (0.351279ms)
+✔ 401 and 403 stop immediately on every operation (0.250487ms)
+✔ batch rejection isolates bad row within total write budget (0.263928ms)
+✔ mixed upsert keeps existing physical rows and allocates after last occupied row (0.381034ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 154.003223

@@ -1,0 +1,7 @@
+version 2.20.0
+{'status': 'complete', 'added': 250, 'updated': 0, 'skipped': 0, 'failed': 0, 'pages': 5, 'duplicateInputs': 0, 'fatal': None, 'errors': [], 'events': [{'operation': 'page', 'status': 429, 'attempt': 1}, {'operation': 'write', 'status': 0, 'attempt': 1}]}
+{'status': 'complete', 'added': 0, 'updated': 0, 'skipped': 250, 'failed': 0, 'pages': 5, 'duplicateInputs': 0, 'fatal': None, 'errors': [], 'events': []}
+{'status': 'partial', 'added': 0, 'updated': 0, 'skipped': 249, 'failed': 2, 'pages': 6, 'duplicateInputs': 0, 'fatal': None, 'errors': [{'order_id': 'bad', 'reason': 'invalid_order'}, {'order_id': 'ORD-0001', 'reason': 'write_unconfirmed'}], 'events': [{'operation': 'write', 'status': 503, 'attempt': 1}, {'operation': 'write', 'status': 503, 'attempt': 2}, {'operation': 'write', 'status': 503, 'attempt': 3}]}
+{'status': 'partial', 'added': 0, 'updated': 1, 'skipped': 249, 'failed': 1, 'pages': 6, 'duplicateInputs': 0, 'fatal': None, 'errors': [{'order_id': 'bad', 'reason': 'invalid_order'}], 'events': []}
+{'status': 'aborted', 'added': 0, 'updated': 0, 'skipped': 0, 'failed': 0, 'pages': 0, 'duplicateInputs': 0, 'fatal': 'authentication_403', 'errors': [], 'events': []}
+PASS 5 actual n8n executions
