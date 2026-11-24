@@ -2,6 +2,12 @@
 
 An importable, inactive n8n workflow that mirrors REST orders into the five managed columns of an Orders worksheet. The shipped configuration connects only to a loopback mock. No external accounts or dependencies are required for the mock or unit tests.
 
+![Order synchronization portfolio cover](assets/cover.jpg)
+
+## Workflow overview
+
+![Local n8n editor showing the order synchronization workflow](assets/workflow.png)
+
 ## Local verification
 
 This personal portfolio project was exercised by the author in a local Node.js-based n8n installation with simulated store and Sheets endpoints. The first synchronization read 250 synthetic orders across five pages. Repeating the sync produced no duplicates. Changing one order updated its row and skipped the other 249. Local checks also covered HTTP 429 handling, recovery after an interrupted write and stopping on HTTP 403.
